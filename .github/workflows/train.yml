@@ -1,0 +1,67 @@
+name: train
+
+on:
+  workflow_dispatch:
+    inputs:
+      steps:
+        description: 'training steps'
+        required: false
+        default: '300'
+
+jobs:
+  train:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          set -o pipefail
+          python -m pip install --upgrade pip
+          pip install numpy scipy
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+
+      - name: Prepare runtime dir
+        run: |
+          mkdir -p out
+          cp data/* out/
+
+      - name: Threads compare (2 vs 4)
+        run: |
+          set -o pipefail
+          env FLY_OUT=out python ci/threads_compare.py 2>&1 | tee train_threads_compare.log
+
+      - name: Train (300 steps, 4 threads, ckpt every 50)
+        run: |
+          set -o pipefail
+          env FLY_OUT=out TORCH_THREADS=4 TRAIN_STEPS=${{ github.event.inputs.steps }} CKPT_EVERY=50 python ci/train_compass_ci.py 2>&1 | tee train_main.log
+
+      - name: Eval trained vs baseline
+        run: |
+          set -o pipefail
+          env FLY_OUT=out python ci/eval_trained.py 2>&1 | tee train_eval.log
+
+      - name: Collect artifacts
+        if: always()
+        run: |
+          mkdir -p train-artifacts
+          cp out/*.json train-artifacts/ 2>/dev/null || true
+          cp out/compass_gain.pt train-artifacts/ 2>/dev/null || true
+          cp out/compass_gain_delta.npz train-artifacts/ 2>/dev/null || true
+          cp -r out/checkpoints train-artifacts/ 2>/dev/null || true
+          cp *.log train-artifacts/ 2>/dev/null || true
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: train-results
+          path: train-artifacts/
+          if-no-files-found: warn

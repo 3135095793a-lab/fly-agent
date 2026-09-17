@@ -12,7 +12,7 @@
 - `ci/`：CI 工具脚本（数据校验、训练单步基准）
 - `.github/workflows/`：Actions 工作流
   - `bench.yml`：基准（数据校验 + 评估链 + 训练单步测速）
-  - 训练工作流后续加入
+  - 训练工作流：train.yml（300步 + 线程对比 + 每50步checkpoint + 训练后评估）
 
 ## 运行约定
 
