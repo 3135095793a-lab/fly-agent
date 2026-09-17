@@ -1,0 +1,51 @@
+name: mb-sweep
+
+on:
+  workflow_dispatch:
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          set -o pipefail
+          python -m pip install --upgrade pip
+          pip install numpy scipy
+
+      - name: Prepare runtime dir
+        run: |
+          mkdir -p out
+          cp data/mb2_W.npz out/
+          cp data/mb2_nodes.npy out/ 2>/dev/null || true
+
+      - name: Run sparse sweep
+        run: |
+          set -o pipefail
+          env FLY_OUT=out python ci/mb_sparse_sweep.py 2>&1 | tee mb_sweep.log
+
+      - name: Collect artifacts
+        if: always()
+        run: |
+          mkdir -p mb-artifacts
+          cp out/mb_sparse_sweep.json mb-artifacts/ 2>/dev/null || true
+          cp out/mb2_sparse_best.npz mb-artifacts/ 2>/dev/null || true
+          cp out/mb2_sparse_best_meta.json mb-artifacts/ 2>/dev/null || true
+          cp mb_sweep.log mb-artifacts/ 2>/dev/null || true
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mb-sparse-results
+          path: mb-artifacts/
+          if-no-files-found: warn
