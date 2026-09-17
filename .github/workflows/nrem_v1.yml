@@ -23,7 +23,7 @@ jobs:
       - name: Baseline eval (g=1)
         run: |
           env FLY_NET=out/mb2_W.npz NREM_OUT=out/nrem python ci/dream/nrem_v1.py --baseline 2>&1 | tee nrem_baseline.log
-      - name: NREM sweep (24 groups: rule A/B x lambda x rounds)
+      - name: NREM sweep 24 groups (rule A/B x lambda x rounds)
         run: |
           env FLY_NET=out/mb2_W.npz NREM_OUT=out/nrem python ci/dream/nrem_v1.py --sweep 2>&1 | tee nrem_sweep.log
       - name: Collect artifacts
