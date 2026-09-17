@@ -1,0 +1,77 @@
+name: bench
+
+on:
+  workflow_dispatch:
+
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          set -o pipefail
+          python -m pip install --upgrade pip
+          pip install numpy scipy
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+
+      - name: Environment info
+        run: |
+          set +e
+          {
+            echo '=== CPU ==='
+            nproc
+            lscpu | head -25 || true
+            echo '=== cgroup cpu quota ==='
+            cat /sys/fs/cgroup/cpu.max 2>/dev/null || cat /sys/fs/cgroup/cpu/cpu.cfs_quota_us 2>/dev/null || true
+            echo '=== Memory ==='
+            free -h
+            echo '=== Versions ==='
+            python -V
+            python -c "import numpy, scipy, torch; print('numpy', numpy.__version__, '| scipy', scipy.__version__, '| torch', torch.__version__)"
+            echo '=== git ==='
+            git log -1 --oneline
+          } 2>&1 | tee bench_env.log
+
+      - name: Prepare runtime dir
+        run: |
+          mkdir -p out
+          cp data/* out/
+
+      - name: Data validation
+        run: |
+          set -o pipefail
+          python ci/validate_data.py 2>&1 | tee bench_data_validation.log
+
+      - name: Eval chain (numpy compass task)
+        run: |
+          set -o pipefail
+          env FLY_OUT=out python scripts/compass_task.py 2>&1 | tee bench_eval_compass_task.log
+
+      - name: Train-step benchmark (torch, 10 steps)
+        run: |
+          set -o pipefail
+          env FLY_OUT=out BENCH_STEPS=10 python ci/bench_train_step.py 2>&1 | tee bench_train_step.log
+
+      - name: Collect artifacts
+        if: always()
+        run: |
+          mkdir -p bench-artifacts
+          cp out/*.json bench-artifacts/ 2>/dev/null || true
+          cp *.log bench-artifacts/ 2>/dev/null || true
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-results
+          path: bench-artifacts/
+          if-no-files-found: warn
