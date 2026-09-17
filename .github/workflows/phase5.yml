@@ -1,0 +1,53 @@
+name: phase5
+
+on:
+  workflow_dispatch:
+
+jobs:
+  apl:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          set -o pipefail
+          python -m pip install --upgrade pip
+          pip install numpy scipy
+
+      - name: Prepare runtime dir
+        run: |
+          mkdir -p out
+          cp data/mb2_W.npz out/
+          cp data/mb2_nodes.npy out/ 2>/dev/null || true
+
+      - name: Run phase5 APL feedback experiments
+        run: |
+          set -o pipefail
+          env FLY_OUT=out python ci/phase5_apl.py 2>&1 | tee phase5.log
+
+      - name: Collect artifacts
+        if: always()
+        run: |
+          mkdir -p p5-artifacts
+          cp out/phase5_results.json p5-artifacts/ 2>/dev/null || true
+          cp out/phase5_raw.npz p5-artifacts/ 2>/dev/null || true
+          cp out/phase5_pairs.csv p5-artifacts/ 2>/dev/null || true
+          cp out/mb2_sparse_best_apl.npz p5-artifacts/ 2>/dev/null || true
+          cp out/mb2_sparse_best_apl_meta.json p5-artifacts/ 2>/dev/null || true
+          cp phase5.log p5-artifacts/ 2>/dev/null || true
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase5-results
+          path: p5-artifacts/
+          if-no-files-found: warn
