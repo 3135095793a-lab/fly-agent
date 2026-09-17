@@ -1,0 +1,42 @@
+name: nrem_v1
+on:
+  workflow_dispatch:
+jobs:
+  nrem:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install numpy scipy
+      - name: Prepare runtime dir
+        run: |
+          mkdir -p out/nrem
+          cp data/mb2_W.npz out/
+      - name: Baseline eval (g=1)
+        run: |
+          env FLY_NET=out/mb2_W.npz NREM_OUT=out/nrem python ci/dream/nrem_v1.py --baseline 2>&1 | tee nrem_baseline.log
+      - name: NREM sweep (24 groups: rule A/B x lambda x rounds)
+        run: |
+          env FLY_NET=out/mb2_W.npz NREM_OUT=out/nrem python ci/dream/nrem_v1.py --sweep 2>&1 | tee nrem_sweep.log
+      - name: Collect artifacts
+        if: always()
+        run: |
+          mkdir -p nrem-artifacts
+          cp -r out/nrem/* nrem-artifacts/ 2>/dev/null || true
+          cp nrem_baseline.log nrem-artifacts/ 2>/dev/null || true
+          cp nrem_sweep.log nrem-artifacts/ 2>/dev/null || true
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nrem-v1-results
+          path: nrem-artifacts/
+          if-no-files-found: warn
