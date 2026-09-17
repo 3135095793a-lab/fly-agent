@@ -1,0 +1,38 @@
+{
+  "network": "mb2_W.npz",
+  "neurons": 38192,
+  "nnz": 961085,
+  "kc_count": 382,
+  "config": {
+    "gain": 3.0,
+    "mod": {
+      "kwta_scope": "kc",
+      "kwta_k": 10
+    },
+    "steps": 12
+  },
+  "metrics": {
+    "kc_active": 0.1021,
+    "all_active": 0.7025,
+    "discrimination": 0.12584,
+    "mean_cosine": 0.312,
+    "stab_det_cos": 1.0,
+    "stab_n05_cos": 0.0655,
+    "stab_n05_jaccard": 0.1105
+  },
+  "criteria": {
+    "sparse": true,
+    "discriminate": true,
+    "stable_det": true
+  },
+  "all_met": true,
+  "strict_noisy_met": false,
+  "protocol": {
+    "alpha": 0.3,
+    "stim_steps": 5,
+    "steps": 12,
+    "amp": 0.5,
+    "active_threshold": 0.1
+  },
+  "note": "resp = KC 响应（N_PAT 输入 × KC）；active CSR = |resp|>0.1 的稀疏二值支持集；inputs = 每行输入神经元索引"
+}
