@@ -40,6 +40,19 @@ def main():
 
     clean = sum(1 for k, p in zip(keys, pats) if (fly.recall(p) or {}).get('key') == k)
     print(f'[sleep] post-sleep clean: {clean}/100')
+
+    # 诊断对照：v1 式 sleep（struct=True）在 segmented 上的表现
+    fly2 = FlyAgent(mode='segmented')
+    rng2 = np.random.default_rng(20260918)
+    pats2 = [fly2.ctx.rand_pattern(rng2) for _ in range(100)]
+    keys2 = [f'm{i}' for i in range(100)]
+    for k, p in zip(keys2, pats2):
+        fly2.remember(k, p)
+    rngq2 = np.random.default_rng(555)
+    noisy2 = [fly2.ctx.scrambler(p, 0.3, rngq2) for p in pats2]
+    sl2 = fly2.sleep(rounds=20, lam=0.90, noise_sigma=2.0, struct_update=True)
+    hit2 = sum(1 for k, q in zip(keys2, noisy2) if (fly2.recall(q) or {}).get('key') == k)
+    print(f'[sleep-v1] struct=True post-sleep noisy0.3: {hit2}/100 (diagnostic) ({time.time()-t0:.0f}s)')
     print(f'total {time.time()-t0:.1f}s')
 
 
