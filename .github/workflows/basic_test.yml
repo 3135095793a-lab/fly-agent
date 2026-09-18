@@ -33,7 +33,7 @@ jobs:
         run: |
           cd basic
           python tests/test_boundary.py
-      - name: Path independence check (expected: fail without chdir)
+      - name: Path independence check (expected fail without chdir)
         if: always()
         run: |
           cd /tmp
