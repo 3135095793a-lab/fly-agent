@@ -153,6 +153,22 @@ def exp1_iso(rounds):
     with open(os.path.join(OUT, 'ci_exp1_iso.json'), 'w') as f:
         json.dump({'baseline': base, 'struct': res_struct, 'sigma': {str(k): v for k, v in res_sigma.items()}, 'best_sigma': best}, f)
 
+    # E1b：iso 额外变体（no-sleep+σ / 睡后更高σ）
+    log('[E1b] extra iso variants:')
+    n_edges = len(gs)
+    g1 = np.ones(n_edges, np.float32)
+    extra = {}
+    for name, gv in [('nosleep_s2', perturb(g1, 2.0, 7003)),
+                     ('nosleep_s3', perturb(g1, 3.0, 7003)),
+                     ('sleep_s3', perturb(gs, 3.0, 7003)),
+                     ('sleep_s5', perturb(gs, 5.0, 7003))]:
+        apply_and_recodes(fly, gv)
+        r = t2_iso(fly, keys, noisy)
+        extra[name] = r
+        log(f'[E1b] {name}: T2 = {r}/100  ({time.time()-t0:.0f}s)')
+    with open(os.path.join(OUT, 'ci_exp1b_iso_extra.json'), 'w') as f:
+        json.dump(extra, f)
+
 
 def exp2_global(rounds):
     log('=' * 30)
