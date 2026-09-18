@@ -1,0 +1,39 @@
+name: stage8_ci
+on:
+  workflow_dispatch:
+jobs:
+  stage8:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install numpy scipy
+      - name: Prepare runtime dir
+        run: |
+          mkdir -p out
+          cp data/mb2_W.npz out/
+          mkdir -p out/agent_v2
+      - name: Run stage8 experiments
+        run: |
+          env FLY_NET=out/mb2_W.npz S8_OUT=out/agent_v2 python ci/stage8_ci.py 2>&1 | tee stage8_ci.log
+      - name: Collect artifacts
+        if: always()
+        run: |
+          mkdir -p stage8-artifacts
+          cp stage8_ci.log stage8-artifacts/ 2>/dev/null || true
+          cp -r out/agent_v2/* stage8-artifacts/ 2>/dev/null || true
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage8-results
+          path: stage8-artifacts/
+          if-no-files-found: warn
