@@ -1,0 +1,113 @@
+{
+  "name": "fly-agent dream evaluation protocol",
+  "version": "1.1",
+  "created": "2026-09-18",
+  "updated": "2026-09-18 (v1.1: stability 3->6 模式降方差; 记录噪声流敏感性发现)",
+  "author": "Operit (for 晴菜 review)",
+  "notes": "固化评测协议：种子/样本量/口径写死，任何人任何实现按此跑，结果可直接对比。",
+  "network": {
+    "path": "data/mb2_W.npz",
+    "env_override": "FLY_NET",
+    "N": 38192,
+    "nnz": 961085
+  },
+  "kc_selection": {
+    "rule": "nnz_per_column >= percentile(nnz_per_column, 99)",
+    "kc_count": 382
+  },
+  "simulation": {
+    "gain": 3.0,
+    "alpha": 0.3,
+    "steps": 12,
+    "stim_steps": 5,
+    "amp": 0.5
+  },
+  "readout": {
+    "active_threshold": 0.1,
+    "kwta_k_percent": 10
+  },
+  "sign_convention": {
+    "definition": "编码器输出 = 发放率语义（值越正 = 发放越强）。若输出的非零支持集 >90% 为负，则整体取负（positivize()），使语义翻正。",
+    "metrics_invariance": "整体取负对 cosine / 检索指标不变（cos(-a,-b)=cos(a,b)）；翻正的作用是让 rectified（生物学正发放率）口径可用。",
+    "rectified": "max(r, 0)",
+    "status": "v1 生效（晴菜批准，2026-09-17）"
+  },
+  "encoder_contract": {
+    "call": "encoder(stim_indices, noise=0.0, seed=None) -> np.ndarray (KC-sized float32)",
+    "noise_rule": "noise>0 时在每步驱动 d 上加 noise*standard_normal(N)（与 mb_sparse 稳定性协议一致）",
+    "noise_unsupported": "忽略 noise 参数的编码器在稳定性评测中标记 noise_support=false"
+  },
+  "patterns": {
+    "input_pattern_size": 400,
+    "pairs": {
+      "levels": [
+        0.1,
+        0.3,
+        0.5,
+        0.7,
+        0.9
+      ],
+      "per_level": 40,
+      "seed": 42
+    },
+    "bank": {
+      "size": 100,
+      "seed": 43
+    },
+    "queries": {
+      "per_noise": 50,
+      "noise_levels": [
+        0.1,
+        0.3
+      ]
+    }
+  },
+  "stability": {
+    "n_patterns": 6,
+    "pattern_seed": 3,
+    "reps": 3,
+    "rep_seeds": [
+      11,
+      28,
+      45
+    ],
+    "noise_levels": [
+      0.0,
+      0.02,
+      0.05,
+      0.1
+    ],
+    "note": "noise=0 即确定性重复（应=1.0）；0.05 为历史口径（stab_n05）；0.1 为扩展档",
+    "sensitivity_note": "【2026-09-18 发现】该指标由噪声流驱动，对实现/环境/种子组合高度敏感：同模式同噪声仅换种子三重奏，cos 可在 0.03~0.21 间波动；历史单值 0.0655 无法精确复现（本地抽样 0.10~0.17）。结论：只做区间比较与前后对比，不做单点跨环境对齐。v1.1 起用 6 模式均值+min/max 区间。"
+  },
+  "concept_generalization": {
+    "status": "v1 草案（待晴菜确认）",
+    "n_concepts": 10,
+    "train_variants": 20,
+    "test_variants": 10,
+    "train_scramble": 0.2,
+    "test_scramble": [
+      0.2,
+      0.3
+    ],
+    "seed": 77,
+    "scramble_rng_offset": 999,
+    "method": "prototype 最近邻分类：prototype=训练变体编码均值；测试变体用 clean/带噪编码与之比较"
+  },
+  "criteria": {
+    "sparse_window": [
+      0.05,
+      0.15
+    ],
+    "rho_gt": 0.7,
+    "t1s_gt": 0.85
+  },
+  "history_baselines": {
+    "plain_ref_rho_s": 0.3711,
+    "kwta_static_rho_s": 0.6205,
+    "apl_t5_i3000_rho_s": 0.4777,
+    "hyb_t5_i100000_rho_s": 0.7897,
+    "rp_control_rho_s": 0.952,
+    "stab_n05_cos_kwta": 0.0655
+  }
+}
