@@ -70,19 +70,21 @@ class FlyAgent:
             self.n_segments = int(S)
             self.seg_len = int(L)
             self.seg_k = self.seg_k or max(1, int(L * 0.2))
-            self.seg_enabled = np.ones(self.n_segments, bool)
+            self.seg_enabled = np.ones(self.n_segments, np.float32)  # 段门控值（1.0=开 / 0.0=hard断 / 0.2=soft断）
         else:
             self.kc_all = self.ctx.KC
             self.n_segments = 0
-            self.seg_enabled = np.zeros(0, bool)
+            self.seg_enabled = np.zeros(0, np.float32)
 
         self._ban_mask = np.zeros(self.ctx.N, bool)
         self._refresh_eff()
 
     # ---------------- 内部：模式与编码 ----------------
     def _to_pattern(self, data):
-        if isinstance(data, np.ndarray) and data.dtype.kind in 'iu' and data.ndim == 1 and data.shape[0] == 400:
-            return data.astype(np.int64)
+        if isinstance(data, np.ndarray) and data.dtype.kind in 'iu' and data.ndim == 1:
+            # 神经元索引数组（任意长度 ≤2000、值域合法）——支持"部分输入"查询
+            if data.size and data.size <= 2000 and int(data.max()) < self.ctx.N and int(data.min()) >= 0:
+                return data.astype(np.int64)
         v = np.asarray(data, dtype=np.float32).ravel()
         return self._vec_to_pattern(v)
 
@@ -124,7 +126,7 @@ class FlyAgent:
 
     def _apply_gate(self, qfull):
         q = qfull.copy()
-        q[~self.seg_enabled] = 0.0
+        q *= self.seg_enabled[:, None]
         return q
 
     @staticmethod
@@ -148,10 +150,22 @@ class FlyAgent:
         self._ban_mask = m
 
     # ---------------- 公共接口 ----------------
-    def remember(self, key, data):
+    def remember(self, key, data, parts=1):
         key = str(key)
         pattern = self._to_pattern(data)
         if self.mode == 'segmented':
+            if parts > 1:
+                # 多段记忆（decompose）：输入分 parts 块，每块编码到一段
+                n = len(pattern)
+                blk = n // parts
+                sub_patterns = [pattern[i * blk:(i + 1) * blk] for i in range(parts)]
+                start = len(self.memory) * parts
+                if start + parts > self.n_segments:
+                    raise RuntimeError(f'segment slots exhausted for parts={parts} (need {start + parts} > {self.n_segments})')
+                codes = [self._encode_full(sp)[start + i].copy() for i, sp in enumerate(sub_patterns)]
+                self.memory[key] = {'pattern': pattern, 'sub_patterns': sub_patterns, 'codes': np.stack(codes),
+                                    'slots': list(range(start, start + parts)), 'parts': parts, 'data': data}
+                return {'key': key, 'parts': parts, 'start_slot': start}
             slot = len(self.memory)
             if slot >= self.n_segments:
                 raise RuntimeError(f'segment slots exhausted ({self.n_segments} 段 < {slot + 1} 记忆)')
@@ -182,7 +196,60 @@ class FlyAgent:
         order = np.argsort(-sims)[:k]
         return [{'key': keys[i], 'data': self.memory[keys[i]]['data'], 'score': float(sims[i])} for i in order]
 
-    def sleep(self, rounds=20, lam=0.90, rule='A', noise_sigma=0.0, noise_seed=7003, noise_mode='lognormal'):
+    def recall_blocked(self, blocks, k=1):
+        """多段记忆（parts>1）的部分块召回：blocks=已提供的块列表（按块顺序）。"""
+        if self.mode != 'segmented':
+            return []
+        keys = [kk for kk, m in self.memory.items() if m.get('parts', 1) > 1]
+        if not keys:
+            return []
+        scores = []
+        for kk in keys:
+            m = self.memory[kk]
+            scs = []
+            for i, blk in enumerate(blocks):
+                if i >= m['parts']:
+                    break
+                if float(self.seg_enabled[m['slots'][i]]) < 1.0:
+                    continue
+                q = self._encode_full(blk)[m['slots'][i]]
+                scs.append(self._cos(q, m['codes'][i]))
+            scores.append(float(np.mean(scs)) if scs else 0.0)
+        order = np.argsort(-np.array(scores))[:k]
+        return [{'key': keys[i], 'data': self.memory[keys[i]]['data'], 'score': float(scores[i])} for i in order]
+
+    def novelty(self, query, thresh=None):
+        """异样检测 -> (is_novel, max_sim)。"""
+        keys = list(self.memory.keys())
+        if not keys:
+            return (True, 0.0)
+        if thresh is None:
+            thresh = getattr(self, 'novelty_thresh', 0.5)
+        if self.mode == 'segmented':
+            qfull = self._apply_gate(self._encode_full(self._to_pattern(query)))
+            sims = [self._cos(qfull[self.memory[kk]['slot']], self.memory[kk]['code'])
+                    for kk in keys if 'slot' in self.memory[kk]]
+        else:
+            q = self._encode(self._to_pattern(query)).astype(np.float64)
+            qn = q / (np.linalg.norm(q) + 1e-9)
+            codes = np.stack([self.memory[kk]['code'] for kk in keys])
+            cn = codes / (np.linalg.norm(codes, axis=1, keepdims=True) + 1e-9)
+            sims = (cn @ qn).tolist()
+        mx = max(sims) if sims else 0.0
+        return (bool(mx < thresh), float(mx))
+
+    def recombine(self, new_key, key1, key2, split=0.5):
+        """创新组合：前半用 key1 的输入、后半用 key2 的输入 → 存为新记忆。"""
+        m1 = self.memory[str(key1)]
+        m2 = self.memory[str(key2)]
+        p1, p2 = m1['pattern'], m2['pattern']
+        cut = int(len(p1) * split)
+        new_pat = np.concatenate([p1[:cut], p2[cut:]])
+        return self.remember(new_key, new_pat)
+
+    def sleep(self, rounds=20, lam=0.90, rule='A', noise_sigma=0.0, noise_seed=7003, noise_mode='lognormal',
+              struct_update=True):
+        """做梦巩固。struct_update=False（NREM v2）：跳过共激活统计+Δg，仅每轮 g*=lam + 末尾 σ 扰动。"""
         keys = list(self.memory.keys())
         if not keys:
             return {'skipped': 'empty memory'}
@@ -193,10 +260,14 @@ class FlyAgent:
         noise_rng = np.random.default_rng(7002)
         traj = []
         for r in range(rounds):
-            order = order_rng.permutation(n_exp)
-            s, stat, T, diag = NREM.sleep_round(self.ctx, s, x_cache, order, noise_rng, NREM.CFG['sigma'], rule)
-            dg = NREM.compute_delta_g(stat, T, n_exp, rule, NREM.CFG)
-            self.g = NREM.apply_update(self.g, dg, lam, NREM.CFG)
+            if struct_update:
+                order = order_rng.permutation(n_exp)
+                s, stat, T, diag = NREM.sleep_round(self.ctx, s, x_cache, order, noise_rng, NREM.CFG['sigma'], rule)
+                dg = NREM.compute_delta_g(stat, T, n_exp, rule, NREM.CFG)
+                self.g = NREM.apply_update(self.g, dg, lam, NREM.CFG)
+            else:
+                # NREM v2：仅下缩放（增益重标定），不做结构学习
+                self.g = np.clip(self.g * np.float32(lam), 0.0, NREM.CFG['g_max']).astype(np.float32)
             traj.append({'round': r + 1, 'g_mean': float(self.g.mean())})
         self.sleep_rounds_total += rounds
         self.sleep_history.append({'rounds': rounds, 'lam': lam, 'traj': traj})
@@ -221,13 +292,14 @@ class FlyAgent:
         return {'rounds': rounds, 'g_mean': float(self.g.mean()),
                 'g_p99': float(np.percentile(self.g, 99)), 'n_replayed': n_exp}
 
-    def disconnect(self, key):
+    def disconnect(self, key, mode='hard'):
         k = str(key)
         if k not in self.memory:
             raise KeyError(k)
         if self.mode == 'segmented':
-            self.seg_enabled[self.memory[k]['slot']] = False
-            return {'disconnected': k, 'mechanism': 'segment-gate', 'slot': int(self.memory[k]['slot'])}
+            slot = self.memory[k]['slot']
+            self.seg_enabled[slot] = 0.0 if mode == 'hard' else 0.2
+            return {'disconnected': k, 'mechanism': f'segment-gate-{mode}', 'slot': int(slot)}
         for n in self.memory[k]['pattern']:
             n = int(n)
             self.ban_count[n] = self.ban_count.get(n, 0) + 1
@@ -240,7 +312,7 @@ class FlyAgent:
         if k not in self.memory:
             raise KeyError(k)
         if self.mode == 'segmented':
-            self.seg_enabled[self.memory[k]['slot']] = True
+            self.seg_enabled[self.memory[k]['slot']] = 1.0
             return {'reconnected': k, 'mechanism': 'segment-gate'}
         for n in self.memory[k]['pattern']:
             n = int(n)
@@ -251,7 +323,7 @@ class FlyAgent:
 
     def list_disconnected(self):
         if self.mode == 'segmented':
-            return [k for k, m in self.memory.items() if not self.seg_enabled[m['slot']]]
+            return [k for k, m in self.memory.items() if float(self.seg_enabled[m['slot']]) < 1.0]
         out = []
         for k, m in self.memory.items():
             if all(self.ban_count.get(int(n), 0) > 0 for n in m['pattern']):
@@ -311,7 +383,7 @@ class FlyAgent:
         sk = int(z['seg_k'][0]) if 'seg_k' in z.files else 0
         self.seg_k = sk if sk > 0 else None
         self.kc_all = z['kc_all'].astype(np.int64) if 'kc_all' in z.files else self.ctx.KC
-        self.seg_enabled = z['seg_enabled'].astype(bool) if 'seg_enabled' in z.files else np.zeros(0, bool)
+        self.seg_enabled = z['seg_enabled'].astype(np.float32) if 'seg_enabled' in z.files else np.zeros(0, np.float32)
         if self.mode == 'segmented':
             self.n_segments = int(len(self.kc_all) // self.seg_len)
         self.g = z['g'].astype(np.float32)
