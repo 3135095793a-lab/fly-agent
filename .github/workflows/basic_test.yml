@@ -1,0 +1,43 @@
+name: basic_test
+on:
+  workflow_dispatch:
+jobs:
+  basic:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install numpy scipy
+      - name: Smoke (demo + fly_agent)
+        run: |
+          cd basic
+          python demo.py
+          python fly_agent.py
+      - name: Metrics (A2 full)
+        run: |
+          cd basic
+          python tests/test_metrics.py
+      - name: Sleep test (v2, sigma=2)
+        run: |
+          cd basic
+          python tests/test_sleep.py
+      - name: Boundary tests (A3)
+        run: |
+          cd basic
+          python tests/test_boundary.py
+      - name: Path independence check (expected: fail without chdir)
+        if: always()
+        run: |
+          cd /tmp
+          echo '--- import from outside (expect data path error) ---'
+          python -c "import sys; sys.path.insert(0, '$GITHUB_WORKSPACE/basic'); from fly_agent import FlyAgent; fly = FlyAgent()" && echo 'UNEXPECTED OK' || echo 'EXPECTED: cwd-dependent data path issue confirmed'
+          echo '--- import from outside with FLY_NET env (expect OK) ---'
+          FLY_NET=$GITHUB_WORKSPACE/basic/data/mb2_W.npz python -c "import sys; sys.path.insert(0, '$GITHUB_WORKSPACE/basic'); from fly_agent import FlyAgent; fly = FlyAgent(); print('FLY_NET workaround OK')" || echo 'FLY_NET workaround FAILED'
