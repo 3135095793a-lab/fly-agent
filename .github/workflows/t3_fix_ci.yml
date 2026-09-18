@@ -1,0 +1,39 @@
+name: t3_fix_ci
+on:
+  workflow_dispatch:
+jobs:
+  t3fix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install numpy scipy
+      - name: Prepare runtime dir
+        run: |
+          mkdir -p out
+          cp data/mb2_W.npz out/
+          mkdir -p out/t3fix
+      - name: Run all T3-fix experiments
+        run: |
+          env FLY_NET=out/mb2_W.npz T3FIX_OUT=out/t3fix python ci/t3_fix_ci.py 2>&1 | tee t3_fix_ci.log
+      - name: Collect artifacts
+        if: always()
+        run: |
+          mkdir -p t3fix-artifacts
+          cp t3_fix_ci.log t3fix-artifacts/ 2>/dev/null || true
+          cp -r out/t3fix/* t3fix-artifacts/ 2>/dev/null || true
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: t3fix-results
+          path: t3fix-artifacts/
+          if-no-files-found: warn
